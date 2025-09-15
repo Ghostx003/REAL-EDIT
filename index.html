@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Pro Local Editor</title>
+
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/codemirror.min.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/theme/material-darker.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/codemirror.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/mode/javascript/javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/mode/xml/xml.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/mode/css/css.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.15/mode/markdown/markdown.min.js"></script>
+    
+    <style>
+        :root {
+            --bg-color: #1e1e1e;
+            --text-color: #d4d4d4;
+            --primary-color: #0e639c;
+            --primary-hover: #1177bb;
+            --container-bg: #252526;
+            --border-color: #3e3e42;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            display: grid;
+            place-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 20px;
+            box-sizing: border-box;
+        }
+        .container {
+            background-color: var(--container-bg);
+            padding: 2rem;
+            border-radius: 12px;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+            width: 90vw;
+            max-width: 900px;
+            text-align: center;
+        }
+        .button-group {
+            display: flex;
+            justify-content: center;
+            gap: 1rem;
+            margin-bottom: 1.5rem;
+        }
+        button {
+            font-size: 1rem;
+            font-weight: 500;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background-color 0.2s ease;
+        }
+        .primary-button {
+            background-color: var(--primary-color);
+            color: white;
+        }
+        .primary-button:hover {
+            background-color: var(--primary-hover);
+        }
+        
+        /* CodeMirror Styling */
+        .CodeMirror {
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            height: 60vh;
+            font-size: 16px;
+            text-align: left;
+        }
+        #statusMessage {
+            margin-top: 1rem;
+            font-weight: 500;
+            height: 20px;
+            color: #4caf50; /* Green for success messages */
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <div class="button-group">
+            <button id="openButton" class="primary-button">📂 Open File</button>
+            <button id="saveButton" class="primary-button">💾 Save File</button>
+        </div>
+
+        <div id="editor-container"></div>
+        
+        <div id="statusMessage">Welcome to the Pro Editor!</div>
+    </div>
+
+    <script>
+        const openButton = document.getElementById('openButton');
+        const saveButton = document.getElementById('saveButton');
+        const statusMessage = document.getElementById('statusMessage');
+        
+        // This will hold the reference to the opened file
+        let fileHandle;
+
+        // --- 1. Initialize the CodeMirror Editor ---
+        const editor = CodeMirror(document.getElementById('editor-container'), {
+            value: "// Click 'Open File' to start editing\n// Or paste your code here!",
+            mode:  "javascript",
+            theme: "material-darker",
+            lineNumbers: true,
+            autofocus: true
+        });
+
+        // --- 2. Open File Logic ---
+        openButton.addEventListener('click', async () => {
+            try {
+                // The showOpenFilePicker() is the magic function from the API
+                [fileHandle] = await window.showOpenFilePicker();
+                
+                if (fileHandle.kind !== 'file') {
+                    return;
+                }
+                
+                const file = await fileHandle.getFile();
+                const contents = await file.text();
+                
+                editor.setValue(contents);
+                updateStatus(`✅ Opened: ${fileHandle.name}`, '#4caf50');
+
+            } catch (err) {
+                // This will catch errors, including the user clicking "Cancel"
+                if (err.name !== 'AbortError') {
+                    console.error(err);
+                    updateStatus(`❌ Error opening file: ${err.message}`, '#f44336');
+                }
+            }
+        });
+        
+        // --- 3. Save File Logic (Refactored into a reusable function) ---
+        // MODIFIED: Created a reusable function for saving.
+        async function saveFile(isAutoSave = false) {
+            if (!fileHandle) {
+                // Only show a warning if the user explicitly clicked the save button.
+                if (!isAutoSave) {
+                    updateStatus('⚠️ Please open a file before saving.', '#ff9800');
+                }
+                return;
+            }
+            
+            try {
+                const writable = await fileHandle.createWritable();
+                const content = editor.getValue();
+                await writable.write(content);
+                await writable.close();
+                
+                // Provide slightly different feedback for auto-saves
+                const messagePrefix = isAutoSave ? '✅ Auto-saved' : '✅ Saved';
+                updateStatus(`${messagePrefix}: ${fileHandle.name}`, '#4caf50');
+                
+            } catch (err) {
+                console.error(err);
+                updateStatus(`❌ Error saving file: ${err.message}`, '#f44336');
+            }
+        }
+
+        // MODIFIED: The save button now calls the new reusable function.
+        saveButton.addEventListener('click', () => saveFile(false));
+
+        // --- 4. NEW: Auto-save on Paste Logic ---
+        editor.on('paste', () => {
+            // We use a short timeout to ensure the paste operation has completed
+            // and the editor's content has been updated before we try to save.
+            setTimeout(() => saveFile(true), 100); 
+        });
+
+
+        // --- Helper Function for Status Messages ---
+        function updateStatus(message, color) {
+            statusMessage.textContent = message;
+            statusMessage.style.color = color;
+        }
+
+    </script>
+</body>
+</html>
